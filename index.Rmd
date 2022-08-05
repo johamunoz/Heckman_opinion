@@ -1,0 +1,156 @@
+---
+title: "Dealing with missing data using the Heckman selection model: methods primer for epidemiologists."
+author: "Johanna Muñoz, Heather Hufstedler, Paul Gustafson, Till Bärnighausen, Valentijn M.T. De Jong, and Thomas P.A. Debray "
+date: "2022-08-02"
+output: html_document
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+# {.tabset}
+
+## Applied example
+This document will help you to understand the Heckman model concepts in a more graphical way. Here we used the HIV dataset simulated by Marra (2009). The original dataset mimics a HIV survey conducted in Zambia in 9 regions, where 17 different covariates were collected. Here, to make more easy the explanation, we focus in the region # 5, and we only use 5 predictors: age, marital status (marital), use of condom in the last relationship (condom),HIV risk of the patient (highhiv) and interviewer identity (InterviewerID).
+
+Here we assumed that the first 4 predictors variables are included in both the outcome and selection model. In addition, on the selection equation we included interviewerID as exclusion restriction variable. Therefore, the Heckman model can be described then by the following equations:
+```{r heck1, echo=FALSE, out.width = '70%'}
+knitr::include_graphics("Heckman_model.png")
+```
+
+Here $y_i^*$ and $r_i^*$ are latent variables or unobservable in the given dataset. But they are related to the observed variables $r_i$ indicator of hivconsent (hivconsent) and $y_i$ the observed hiv test result (hivtest).
+
+```{r heck2, echo=FALSE, out.width = '70%'}
+knitr::include_graphics("latent.png")
+```
+Initially we load the package and the original dataset, and we filter out the region #5 and the included variables.
+```{r data, warning=FALSE}
+library(GJRM)
+library(data.table)
+library(mice)
+library(dplyr)
+library(lme4)
+data("hiv")
+samp.hiv <- setDT(hiv)[region==5,
+                       c("hiv","hivconsent","age","marital","condom","highhiv","interviewerID")]
+summary(samp.hiv)
+
+```
+
+From the summary, we observe that all predictor variables are complete, the only missing value is the HIV test. From the observable HIV tests we observe that the prevalence on the region is approximately 17.17% (hiv mean).
+
+Regarding the exclusion restriction variable we observe that in the region, 17 interviewers conducted the survey with a different number of surveyed people [1,198].
+
+```{r data2, warning=FALSE}
+samp.hiv$interviewerID <-  as.factor(as.character(samp.hiv$interviewerID))
+table(samp.hiv$interviewerID)
+```
+
+The InterviewerID can be included in the selection equation in different ways [Chan,2020], here we opted to use the random effects of each interviewer. For that reason, we estimate the random intercept effect of each Interviewer by using the following generalized mixed model.
+```{r IDinterviewer}
+ID_mixed <- glmer(hivconsent ~(1 | interviewerID), data = samp.hiv, family = binomial)
+reffect  <- ranef(ID_mixed)$interviewerID
+reffect$interviewerID <- levels(samp.hiv$interviewerID)
+colnames(reffect)     <- c("IDreffect","interviewerID")
+samp.hiv  <-  merge(samp.hiv, reffect, by="interviewerID", all.x=TRUE)
+```
+
+There are different available functions in R that can be used to impute missing variables that follows a MNAR mechanisms according to the Heckman model. For instance, MARRA (2007) included inside his R GJRM package, a imputation model based on the Heckman model and it can be also use it the mice.impute.heckprob() function from the R MICEMNAR package described in  Galimard et al (2018) and Galimard et al (2016). Here we used a imputation method that we developed for hierarchical datasets but that can be also used for no grouped datasets.
+```{r Impute}
+source("mice.impute.heckman.ipd2.R")
+```
+
+In the model we opted to include a smoothed term of the variable age. As in our imputation method is not possible to include the smoothing term, we precalculate the smoothed terms of age and save in the dataset as individual variables. Before performing the imputation, we remove the redundant terms (multicollinearity issues), and we assure that the response variable is included as a factor variable. 
+```{r smooth}
+mod <- gam(hivconsent~-1+s(age),data=samp.hiv[,c("age","hivconsent")])
+sage<-as.data.table(model.matrix(mod))
+colnames(sage)<-paste0("sage",(1:ncol(sage)))
+samp.hiv<-cbind(samp.hiv,sage)
+samp.hiv$age<-NULL
+samp.hiv$interviewerID<-NULL
+samp.hiv$hivconsent<-NULL
+samp.hiv$hiv<-as.factor(samp.hiv$hiv)
+```
+
+Next we specify the prediction and methods vector that will be included in the mice function.
+```{r Impute1}
+  ini <- mice(samp.hiv, maxit = 0)
+  meth0<-ini$method
+  pred0 <- ini$pred
+```
+
+Initially we impute hiv missing variable by using the pmm method that follows a MAR mechanism assumption.
+```{r Impute2}
+  meth0
+  pred0["hiv",] 
+```
+
+Then we include the prediction and methods in the mice package
+```{r Impute3,echo = T, results = 'hide'}
+imp_mar <- mice( data=samp.hiv, # dataset with missing values
+                       m = 10,   # number of imputations
+                       meth = meth0, #imputation method vector
+                       pred = pred0, #imputation predictors matrix
+                       maxit=1)
+```
+
+Then, we impute the hiv variable assuming that follows a MNAR mechanism. We need to specify in the method vector that hiv variable will be imputed with the heckman model based imputation with the name "heckman.ipd2". In addition, in the prediction matrix, we should set up all the predictors included in the outcome and selection equation as "1", and the exclusion restriciton variable as "-3".
+```{r Impute4}
+meth0[c("hiv")]<-"heckman.ipd2"
+meth0
+pred0["hiv","IDreffect"] <- -3
+pred0["hiv",] 
+```
+
+Next the meth0 and pred0 objects are included in the mice function as we did it before.
+```{r Impute5,echo = T, results = 'hide'}
+imp_heck <- mice( data=samp.hiv, # dataset with missing values
+                       m = 10,   # number of imputations
+                       meth = meth0, #imputation method vector
+                       pred = pred0, #imputation predictors matrix
+                       maxit=1)
+```
+
+Finally, we pool the results via Rubins rule for each of the imputed datasets, we use the f.abs.perstudy function that is available in the source code accompanying this repository.
+
+```{r rubins,echo = T}
+  mar_res<-f.abs.perstudy(data=complete( imp_mar, "long"),outcome_name<-"hiv")
+  heck_res<-f.abs.perstudy(data=complete( imp_heck, "long"),outcome_name<-"hiv")
+  res<-rbind(mar_res,heck_res)
+  res$method<-c("MAR","Heckman")
+  setDT(res)[,c("method","incidence","ci.lb","ci.ub")]
+```
+
+From the imputation results,  we observe that the HIV prevalence from the MAR imputation is closed to the prevalence obtained only from the observable data. The Heckman model based imputation shows that the HIV prevalence could be higher that observed one, suggesting that patients with HIV+ test are more reluctant to provide the HIV consent.
+late
+
+## Variation of $\rho$
+Here we observe that by varying $\rho$ the correlation parameter between both outcome and selection equation, the relation between latent responses varies (smooth line in the right figure). 
+For instance when $\rho=-1$ the value of an unobservable variable, such as distrust on the health system, makes that error terms are inversely proportional. Therefore and increment in the unobservable variable results in the decreament of the propensity of participating ($r_i$) and the increment on the likelihood of a positive outcome result ($y_i$). This can also visualized in the prevalence table, where the real prevalence of HIV+ cases (HIV+ in all patients = 22%) is underestimated by the prevalence estimate only on observed patients (HIV in only observed patients = 9%).
+
+When $\rho=0$ , dataset follows a MAR mechanism wehre the error terms do not affect the tendency on the latent responses and the prevalence of the entired population can be approximated with the prevalence based on only observable patients.
+
+On the other hand when $\rho=1$, we are in a situation in which there is an unobservable variable such as the the test is a requirement to access to the ART program, that makes that patients with more likelihood of having HIV be more available to give the HIV consent.  Therefore the prevalence of the entire population (HIV+ in all patients = 22%) is overestimated based only in the observable patients (HIV in only observed patients = 28%). 
+
+```{r echo=FALSE}
+source("mice.impute.heckman.ipd2.R")
+imp_shiny1()
+```
+
+## Incentive as ERV
+In this section we visualize how the use of incentives as ERV affects the imputation results.
+We have added a slider in which you can specify the proportion of patients without an incentive (leftmost part of the slider), of those who were given a small incentive (central part of the slider) and of those who they were given a high incentive (rightmost part of the slider).
+
+The assignment of incentives in this example was random. Briefly an incentive makes that the threshold of observability, which establishes whether a measurement is observed or not, shift to the left (Refer to the figure below). That is, in this case, when an individual does not receive any incentive, its threshold remains on zero, so if its propensity value is greater than zero, his test result is observed. On the other hand, when an individual receives a small incentive, his threshold is reduced in 1 unit, so if for instance his propensity score was -0.5 without incentive, with the small incentive he changes of opinion and access to the HIV test since -0.5 > -1. In the case of a staggered incentive, that is, when the population receives different incentive values, the subject that receives a high incentive reduces his observability threshold by 2 units.
+
+
+In the table on the left you can see the number of individuals and their HIV status when the tests were observed and not observed depending on the allocation of incentives. Additionally the last row shows the actual HIV status of the patients in the survey.
+
+On the other hand, the table on the left shows the prevalence estimate when different imputation methods were applied to the simulated data. In general, it is observed that when rho=0, the MAR imputation method (pmm) provides the least bias. As the rho moves aways from zero, it is observed that the Heckman imputation methods provides better HIV prevalence estimates.  Usually the best being those in which staggered or combined incentives (Inteviewer ID and incentive) were used as ERV. However, the effectiveness of these ERVs depends on proportion and which individuals were randomly assigned to each of the incentive groups. 
+
+```{r echo=FALSE}
+source("mice.impute.heckman.ipd2.R")
+imp_shiny2()
+```
