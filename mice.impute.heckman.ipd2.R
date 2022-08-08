@@ -3,28 +3,16 @@ library(lme4)
 library(data.table)
 library(mvtnorm)
 library(fMultivar)
-library(data.table)
 library(mgcv)
 library(GJRM)
 library(Matrix)
 library(mixmeta)
-library(mvtnorm)
 library(pbivnorm)
 library(mice)
-library(micemd)
-library(miceMNAR)
-library(data.table)
-library(vcd)
-library(truncnorm)
-library(mvtnorm)
+
 library(ggplot2)
 library(dplyr)
 library(shiny)
-library(DT)
-library(mice)
-library(fMultivar)
-library(gridExtra)
-library(ggpubr) 
 library(reshape)
 
 # Heckman model based imputation method ----
@@ -169,7 +157,7 @@ copulaIPD <- function(data, sel, out, family, send) {
                               silent = TRUE))
   
   
-  #if (fit_ind!=1) {
+  if (fit_ind!=1) {
   if (!any(inherits(fit, "try-error"))) {
     # model is estimable
     convh <- round(min(eigen(fit$fit$hessian, symmetric = TRUE, only.values = TRUE)$values),6) > 0 # convergence based on hessian positive definiteness
@@ -187,6 +175,7 @@ copulaIPD <- function(data, sel, out, family, send) {
       }
     }
   }
+ }
   
   if( fit_ind ==2){
     fit<-NULL
@@ -802,7 +791,7 @@ data_error<-function(datasim, error, prop=NULL, incentv1,incentv2){
 data_mod <- function(rho, prop, incentv1,incentv2) {
   load("datasim.Rdata")
   set.seed(12345)
-  rho = ifelse(rho == -1,-0.99,ifelse(rho==1,0.99,rho)) # has to be slightly modified due to simulation of skewed errors
+  rho = ifelse(rho == -1,-0.99,ifelse(rho==1,0.99,rho)) # it has to be slightly modified due to simulation of skewed errors
   n= nrow(datasim)
   d <- diag(2)
   d[2,1] <- d[1,2] <- rho
@@ -819,7 +808,7 @@ data_mod <- function(rho, prop, incentv1,incentv2) {
 
 
   
-## Shiny app1----
+## Variation of rho----
 
 ui1 <- fluidPage(
   titlePanel("Variation of rho"),
@@ -904,7 +893,7 @@ imp_shiny1 = function() {
 }
 
 
-## Incentive application
+## Variation of incentive ----
 
 ui2 <- fluidPage(
   titlePanel("Incentive as exclusion restriction variable"),
