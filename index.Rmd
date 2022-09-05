@@ -13,7 +13,7 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 # {.tabset}
 
 ## Applied example
-This document will help you to understand the Heckman model concepts in a more graphical way. Here we used the HIV dataset simulated by Marra (2009). The original dataset mimics a HIV survey conducted in Zambia in 9 regions, where 17 different covariates were collected. Here, to make more easy the explanation, we focus in the region # 5, and we only use 5 predictors: age, marital status (marital), use of condom in the last relationship (condom),HIV risk of the patient (highhiv) and interviewer identity (InterviewerID).
+This document will help you to understand the Heckman model concepts in a more graphical way. Here we used the HIV dataset simulated by Marra (2009). The original dataset mimics a HIV survey conducted in Zambia in 9 regions, where 17 different covariates were collected. Here, to make more easy the explanation, we focus in the region # 5, and we only use 5 predictors: age, marital status (marital), use of condom in the last relationship (condom), HIV risk of the patient (highhiv) and interviewer identity (InterviewerID).
 
 Here we assumed that the first 4 predictors variables are included in both the outcome and selection model. In addition, on the selection equation we included interviewerID as exclusion restriction variable. Therefore, the Heckman model can be described then by the following equations:
 ```{r heck1, echo=FALSE, out.width = '70%'}
@@ -32,8 +32,9 @@ library(data.table)
 library(mice)
 library(dplyr)
 library(lme4)
+
 data("hiv")
-samp.hiv <- setDT(hiv)[region==5,
+samp.hiv <- setDT(hiv)[ region == 5,
                        c("hiv","hivconsent","age","marital","condom","highhiv","interviewerID")]
 summary(samp.hiv)
 
@@ -41,126 +42,917 @@ summary(samp.hiv)
 
 Summarizing the selected database, we note that all predictor variables are complete, and the only missing value is HIV tests (hiv).  From the observable HIV tests, we can estimate that the prevalence in the region is approximately 17.17% (hiv mean).
 
-Regarding the exclusion restriction variable (InterviewID), we note that in the selected region, 17 enumerators conducted the survey with a different number of respondents [1,198].
-
-```{r data2, warning=FALSE}
-samp.hiv$interviewerID <-  as.factor(as.character(samp.hiv$interviewerID))
-table(samp.hiv$interviewerID)
-```
-
-InterviewerID can be included in the selection equation in different ways (Chan & Cook,2020), here we choose to use the random effects of each interviewer. Therefore, we estimate the random intercept effect of each interviewer using the following generalized mixed model.
+Regarding the exclusion restriction variable (InterviewID), we note that in the selected region, 17 enumerators conducted the survey with a different number of respondents. InterviewerID can be included in the selection equation in different ways (Chan & Cook,2020), here we choose to use the random effects of each interviewer. Therefore, we estimate the random intercept effect of each interviewer using the following generalized mixed model.
 
 ```{r IDinterviewer}
-ID_mixed <- glmer(hivconsent ~(1 | interviewerID), data = samp.hiv, family = binomial)
+ID_mixed <- glmer( hivconsent ~( 1 | interviewerID ), data = samp.hiv, family = binomial)
 reffect  <- ranef(ID_mixed)$interviewerID
-reffect$interviewerID <- levels(samp.hiv$interviewerID)
+reffect$interviewerID <- rownames(reffect)
 colnames(reffect)     <- c("IDreffect","interviewerID")
 samp.hiv  <-  merge(samp.hiv, reffect, by="interviewerID", all.x=TRUE)
 ```
 
-There are different functions available in R that can be used to impute missing variables that follow a MNAR mechanism according to the Heckman model. For example, within the R package GJRM (Marra & Radice,2022), the mice imputation method "copulaSS" can be used to impute missing data based on a Heckman model and copula functions. Similarly, the function mice.impute.heckprob() from the R package MICEMNAR described in Galimard et al (2016,2018) can also be used. Here we use an imputation method that we have coded ourselves for hierarchical datasets, but which can also be used for non-clustered datasets.
+There are different functions available in R that can be used to impute missing variables that follow a MNAR mechanism according to the Heckman model. For example, within the R package GJRM (Marra & Radice,2022), the mice imputation method "copulaSS" can be used to impute missing data based on a Heckman model and copula functions. Similarly, the function mice.impute.heckprob() from the R package MICEMNAR described in Galimard et al (2016,2018) can also be used. Here we use an imputation method that we have coded ourselves for hierarchical datasets, but which can also be used for non-clustered datasets. The functions used in this example can be found in the "Additional functions code" tab.
 
-```{r Impute}
-source("mice.impute.heckman.ipd2.R")
+```{r Impute, include=FALSE}
+source("mice.impute.2l.heckman.R")
+source("additional_functions.R")
 ```
 
 In the model we chose to include a smoothed term of the age variable. Because our imputation method is not possible to include the smoothed term, we precompute the smoothed age terms and store them in the dataset as individual variables. Before performing imputation, we removed redundant terms (due to multicollinearity problems), and ensured that the response variable was included as a factor variable. 
 ```{r smooth}
-mod <- gam(hivconsent~-1+s(age),data=samp.hiv[,c("age","hivconsent")])
-sage<-as.data.table(model.matrix(mod))
-colnames(sage)<-paste0("sage",(1:ncol(sage)))
-samp.hiv<-cbind(samp.hiv,sage)
-samp.hiv$age<-NULL
-samp.hiv$interviewerID<-NULL
-samp.hiv$hivconsent<-NULL
-samp.hiv$hiv<-as.factor(samp.hiv$hiv)
+mod  <- gam(hivconsent~ -1 + s(age) ,data = samp.hiv[,c("age","hivconsent")])
+sage <- as.data.table( model.matrix( mod ) )
+colnames(sage) <- paste0( "sage",(1:ncol(sage)))
+samp.hiv <- cbind( samp.hiv, sage)
+samp.hiv$age <- NULL
+samp.hiv$interviewerID <- NULL
+samp.hiv$hivconsent <- NULL
+samp.hiv$hiv <- as.factor(samp.hiv$hiv)
 ```
 
 Next we specify the prediction (pred0) and methods(meth0) objects which are required as parameters in the mice function.
 ```{r Impute1}
-  ini <- mice(samp.hiv, maxit = 0)
-  meth0<-ini$method
+  ini   <- mice(samp.hiv, maxit = 0)
+  meth0 <- ini$method
   pred0 <- ini$pred
 ```
 
 Initially, we impute the missing variable hiv using the "pmm" method that follows a MAR mechanism assumption.
 ```{r Impute2}
   meth0
-  pred0["hiv",] 
+  pred0[ "hiv", ] 
 ```
 
 Here, we run the mice function by passing meth0 and pred0 objects.
 ```{r Impute3,echo = T, results = 'hide'}
-imp_mar <- mice( data=samp.hiv, # dataset with missing values
-                       m = 10,   # number of imputations
-                       meth = meth0, #imputation method vector
-                       pred = pred0, #imputation predictors matrix
-                       maxit=1)
+imp_mar <- mice( data = samp.hiv, # dataset with missing values
+                    m = 10,   # number of imputations
+                 meth = meth0, #imputation method vector
+                 pred = pred0, #imputation predictors matrix
+                maxit = 1 )
 ```
 
-Next, we impute the hiv variable assuming it follows an MNAR mechanism. We must specify in the method object (meth0) that the hiv variable will be imputed with the imputation based on the Heckman model with the name "heckman.ipd2". In addition, in the prediction object (pred0), we must set all predictors included in the outcome and selection equation as "1", and the exclusion constraint variable as "-3".
+Next, we impute the hiv variable assuming it follows an MNAR mechanism. We must specify in the method object (meth0) that the hiv variable will be imputed with the imputation based on the Heckman model with the name "2l.heckman". In addition, in the prediction object (pred0), we must set all predictors included in the outcome and selection equation as "1", and the exclusion constraint variable as "-3".
 
 ```{r Impute4}
-meth0[c("hiv")]<-"heckman.ipd2"
+meth0[ c("hiv") ] <- "2l.heckman"
 meth0
-pred0["hiv","IDreffect"] <- -3
-pred0["hiv",] 
+pred0[ "hiv", "IDreffect"] <- -3
+pred0[ "hiv", ] 
 ```
 
 Next, we pass by the meth0 and pred0 objects in the mice function as we did before.
 ```{r Impute5,echo = T, results = 'hide'}
-imp_heck <- mice( data=samp.hiv, # dataset with missing values
-                       m = 10,   # number of imputations
-                       meth = meth0, #imputation method vector
-                       pred = pred0, #imputation predictors matrix
-                       maxit=1)
+imp_heck <- mice( data = samp.hiv, # dataset with missing values
+                     m = 10,   # number of imputations
+                  meth = meth0, #imputation method vector
+                  pred = pred0, #imputation predictors matrix
+                 maxit = 1)
 ```
 
-Finally, we cluster the results using Rubin's rule for each of the imputed datasets, we use the f.abs.perstudy function which is available in the source code accompanying this repository.
+Finally, we cluster the results using Rubin's rule for each of the imputed datasets, we use the prevalence.pool function which is also available in the “Additional functions code” tab.
 
 ```{r rubins,echo = T}
-  mar_res<-f.abs.perstudy(data=complete( imp_mar, "long"),outcome_name<-"hiv")
-  heck_res<-f.abs.perstudy(data=complete( imp_heck, "long"),outcome_name<-"hiv")
-  res<-rbind(mar_res,heck_res)
-  res$method<-c("MAR","Heckman")
-  setDT(res)[,c("method","incidence","ci.lb","ci.ub")]
+  mar_res  <- prevalence.pool(data = complete( imp_mar, "long"),outcome_name = "hiv")
+  heck_res <- prevalence.pool(data = complete( imp_heck, "long"), outcome_name = "hiv")
+  res <- rbind(mar_res, heck_res)
+  res$method <- c("MAR","Heckman")
+  setDT(res)[,c( "method","prevalence","ci.lb","ci.ub")]
 ```
 
-From the imputation results, we observe that HIV prevalence from MAR imputation (17.5%) is close to the prevalence obtained from observable data alone (17.7%). Imputation based on the Heckman imputation model (19.4%) shows that HIV prevalence could be higher than observed prevalence, suggesting that patients with HIV+ testing are more reluctant to provide HIV consent.
+From the imputation results, we observe that HIV prevalence from MAR imputation (`r round(res$prevalence[1],2)` %) is close to the prevalence obtained from observable data alone (17.7%). Imputation based on the Heckman imputation model (`r round(res$prevalence[2],2)`%) shows that HIV prevalence could be higher than observed prevalence, suggesting that patients with HIV+ testing are more reluctant to provide HIV consent.
 
 ## Variation of $\rho$
 
-Here we observe that by varying $\rho$ the correlation parameter between the outcome equation and the selection equation, not only does the relationship between the errors of both equations vary (figure on the left), but also the relationship between the latent responses varies (smooth line in the figure on the right).
+In this tab, you can better visualize how the variation of $\rho$, the correlation parameter between the outcome equation and the selection equation, affects the estimated HIV prevalence in situations where there is selection bias. 
+Here we simulate a database with the same predictors we used in the previous tab but by setting the $\rho$ value of your preference (please set the value in the slider below)
+```{r echo = FALSE}
+fluidRow(
+    column(12,align="center", sliderInput("x0", "rho:",
+                          min=-1, max=1, value=-1, step=0.1))
+  )
+```
+In the figures below we observe that by varying $\rho$ not only does the relationship between the errors of both equations vary (figure on the left), but also the relationship between the latent responses varies (smooth line in the figure on the right).
 
- For example, when $\rho=-1$ the value of an unobservable variable, such as distrust in the healthcare system, makes the error terms inversely proportional. Therefore, an increase in the unobservable variable results in a decrease in the propensity to participate ($r_i$) and an increase in the probability of a positive HIV result ($y_i$). This can also be glimpsed in the prevalence table, where the actual prevalence of HIV+ cases (HIV+ in all patients = 22%) is underestimated by estimating the prevalence only in observed patients (HIV only in observed patients = 9%).
+```{r echo = FALSE}
+ data.sel0 <- reactive({
+    rho <- input$x0
+    prop<-c(0.85,0.95)
+    datasim<-data_mod(rho=rho,prop=prop,incentv1=1,incentv2=2)
+    datasim
+  })
+  
+  output$plot_error <- renderPlot({ 
+    data<-as.data.table(data.sel0())
+    ggplot(data= as.data.frame(data), aes(eS,eO))+
+      geom_point(size=1,colour="lightblue",alpha=0.7)+
+      geom_smooth(size=0.5,colour="black",se = F)+
+      xlab(expression("Error in the selection equation (" *epsilon[i] **'S'*")"))+
+      ylab(expression("Error in the outcome equation (" *epsilon[i] **'O'*")"))+
+      theme_minimal()+
+      ggtitle("Error terms of both equations")
+  })
+  
+
+  output$plot_noinc <- renderPlot({ 
+    data<-as.data.table(data.sel0())
+    limry<-max(abs(max(data$ry.star)),abs(min(data$ry.star)))
+    limy<-max(abs(max(data$y.star)),abs(min(data$y.star)))
+    group.colors <- c("#7FC97F","#386CB0","#F0027F") 
+    ggplot(data= as.data.frame(data), aes(ry.star,y.star))+
+      labs(shape="Patient")+
+      scale_shape_manual(values=c(19,1))+
+      scale_y_continuous(breaks = c(0)) +
+      scale_x_continuous(breaks = c(0))+ 
+      annotate("text", y = -limy/2, x = (-limy-1), label = "HIV-",angle=90,size=2) +
+      annotate("text", y =  limy/2, x = (-limy-1), label = "HIV+",angle=90,size=2)+
+      coord_cartesian(xlim = c(-limry,limry), ylim = c(-limy,limy),clip = "off")+
+      xlab(expression('Latent propensity of observability '(r[i]*'*') %->%''))+
+      ylab(expression('Latent test result ' (y[i]*'*') %->%''))+
+      theme_minimal()+
+      geom_point(size=1,aes(shape=observedo),alpha=0.7,colour="#7FC97F")+
+      geom_hline(yintercept=0, linetype="dashed", color = "black")+
+      geom_vline(xintercept=0, linetype="dashed", color = "black")+ 
+      geom_smooth(size=0.5,colour="black",se = F)+
+      annotate("text", y =  limy*2/3, x =0.2, label = "Threshold none",angle=90,size=2,color = "#7FC97F")+
+      ggtitle("Latent responses of both equations")+ theme( legend.position = 'right')
+  })
+  
+    output$table_noinc <- renderTable({
+    data<-as.data.table(data.sel0())
+    inceno<-as.data.table(table(data$observedo,data$ybin0))
+    inceno[,V2:=ifelse(V2==1,"HIVp","HIVtn")]
+    inceno<-cast(inceno, V2 ~ V1,value="N")
+    inceno$All<-inceno$Observed+inceno$Unobserved
+    inceno<-as.data.table(melt(setDT(inceno), id.vars = c("V2")))
+    inceno<-as.data.table(cast(inceno, variable ~ V2))
+    inceno[,HIV.prev:=round(HIVp/(HIVp+HIVtn)*100,2)]
+    colnames(inceno)<-c("Patients","HIV+","HIV-","HIV+(%)")
+    inceno
+  })
+
+fluidRow(
+    column(6, plotOutput("plot_error")),
+    column(6, plotOutput("plot_noinc"))
+  )
+
+```
+The prevalence estimate can best be seen in the table below which shows the total number of HIV+ and HIV- tests according to whether observations were measured or not and the estimated prevalence in each of these groups. The actual prevalence in the total simulated population can also be seen. 
+
+```{r echo = FALSE}
+fluidRow(
+column(12,align="center",tableOutput("table_noinc"))  
+)
+```
+
+For example, when $\rho=-1$ the value of an unobservable variable, such as distrust in the healthcare system, makes the error terms inversely proportional. Therefore, an increase in the unobservable variable results in a decrease in the propensity to participate ($r_i$) and an increase in the probability of a positive HIV result ($y_i$). This can also be glimpsed in the prevalence table, where the actual prevalence of HIV+ cases (HIV+ in all patients = 22%) is underestimated by estimating the prevalence only in observed patients (HIV only in observed patients = 9%).
 
 When $\rho=0$ , the data set follows a MAR mechanism in which error terms occur independently and randomly and thus do not affect the trend of latent responses. In this way the prevalence of the total population (22%) can be approximated by the prevalence based only on observable patients (23%).
 
-On the other hand, when $\rho= 1$, we are in a situation where there is an unobservable variable, such as testing being a requirement for access to an antiretroviral therapy (ART) program, which makes patients more likely to have HIV more available to give HIV consent. Therefore, in this situation the population-wide prevalence (HIV+ in all patients = 22%) is overestimated based only on observable patients (HIV only in observed patients = 28%).
+On the other hand, when $\rho= 1$, we are in a situation where there is an unobservable variable, such as testing being a requirement for access to an antiretroviral therapy (ART) program, which makes patients more likely to be HIV-positive more willing to consent. Therefore, in this situation the prevalence in the whole population (HIV+ in all patients = 22%) is overestimated based only on observable patients (HIV only in observed patients = 28%).
 
 
 
-```{r echo=FALSE}
-source("mice.impute.heckman.ipd2.R")
-imp_shiny1()
-```
 
 ## Incentive as ERV
 
-In this tab we visualize how the use of incentives such as ERV affects the imputation results. We have added a slider where the proportion of patients with no incentive (leftmost part of the slider), those who received a small incentive (middle part of the slider) and those who received a high incentive (rightmost part of the slider) can be specified.
+In this tab we visualize how the use of incentives such as ERV affects the imputation results. Besides the $\rho$ slider, we have added a slider where the proportion of patients with no incentive (leftmost part of the slider), those who received a small incentive (middle part of the slider) and those who received a high incentive (rightmost part of the slider) can be specified.
+
+```{r echo = FALSE}
+
+#flowLayout(
+   #sliderInput("x", "rho:",min=-1, max=1, value=1, step=0.1),
+   #sliderInput("p","Proportion incentive",min = 0,max = 1,value =c(0.85,0.95),step=0.01)
+
+fluidRow(
+    column(6, sliderInput("x", "rho:",min=-1, max=1, value=1, step=0.1)),
+    column(6, sliderInput("p","Proportion incentive",min = 0,max = 1,value =c(0.85,0.95),step=0.01))
+  )
+
+```
 
 The allocation of incentives in this example was randomized. Simply put, an incentive causes the observability threshold, which establishes whether a measure is observed or not, to shift to the left (see figure below). 
 
-That is, when an individual receives no incentive, his threshold remains at zero, so if his propensity score is greater than zero, his outcome is observed.In contrast, when an individual receives a small incentive, his threshold is reduced by 1 unit, so that if for example his propensity value was -0.5 with no incentive, with the small incentive the individual changes his mind and agrees to the HIV test since -0.5 > -1.
+That is, when an individual receives no incentive, his threshold remains at zero, so if his propensity score is greater than zero, his outcome is observed. Conversely, when an individual receives a small incentive, his threshold is reduced by 1 unit. In other words, if, for example, the individual's propensity score is -0.5, without incentive he would not consent to the test since his propensity is lower than the observability threshold (-0.5 < 0), but if he were offered a small incentive, he would consent to the test, since his propensity would be higher than the new threshold with incentive (-0.5 > -1).
 
-On the other hand, in the case of a staggered incentive, i.e. when the population receives different incentive values. For example in this example we simulate that subjects randomly receive no incentive, a small incentive and a high incentive. Particularly, in this case if a subject receives a high incentive, its observability threshold is reduced by 2 units.
+Additionally we consider a survey with staggered incentive, i.e., when the population receives different types of incentives.  Here the population was randomly assigned into three incentive groups: no incentive, small incentive and large incentive. In this case, for the subjects in the large incentive group, their observability threshold was reduced by 2 units, so that individuals with very low propensity can consent to the test by being offered a very relevant incentive. 
 
-The table on the left shows the number of individuals and their HIV status when tests were observed and unobserved as a function of incentive allocation. The last row of this table shows the actual HIV status of the patients in the survey.
+```{r echo = FALSE}
+x1 <- reactive({input$x})
+p1 <- reactive({input$p})
 
-We applied different methods and VRE to the simulated data, and the estimated prevalences in each of the imputed databases are displayed in the table on the left. In general, it is observed that when rho=0, the MAR imputation method (pmm) provides the least bias. As rho moves away from zero, it is observed that Heckman imputation methods provide better estimates of HIV prevalence. In most cases it is observed that not using ERV in the Heckman model can lead to more biased estimates. In general, better prevalence estimates were obtained when the best ones are those in which scaled or combined incentives (interviewer ID and incentive) were used as ERVs. However, the effectiveness of these ERVs depends on the proportion and which individuals were randomly assigned to each of the incentive groups.
+data.sel <- reactive({
+    datasim <- data_mod(rho=x1(), prop=p1(), incentv1=1, incentv2=2)
+    datasim
+  })
+  
+  output$plot_inc <- renderPlot({ 
+    datasim<-as.data.table(data.sel())
+    incentv1=max(datasim$incen1)
+    incentv2=max(datasim$incen2)
+    limry<-max(abs(max(datasim$ry.star)),abs(min(datasim$ry.star)))
+    limy<-max(abs(max(datasim$y.star)),abs(min(datasim$y.star)))
+    group.colors <- c("#7FC97F","#386CB0","#F0027F") 
+    ggplot(data= as.data.frame(datasim), aes(ry.star,y.star))+
+      labs(x ="latent propensity of observability(ry*) -->", y = "latent outcome response (y*) --->")+
+      labs(shape="Measurement")+
+      scale_shape_manual(values=c(19,1))+
+      scale_y_continuous(breaks = c(0)) +
+      scale_x_continuous(breaks = c(0))+ 
+      annotate("text", y = -limy/2, x = (-limy-1), label = "HIV-",angle=90,size=2) +
+      annotate("text", y =  limy/2, x = (-limy-1), label = "HIV+",angle=90,size=2)+
+      coord_cartesian(xlim = c(-limry,limry), ylim = c(-limy,limy),clip = "off")+
+      xlab(expression('Latent propensity of observability '(R[i]*'*') %->%''))+
+      ylab(expression('Latent test result ' (Y[i]*'*') %->%''))+
+      theme_minimal()+
+      geom_point(size=1,aes(colour=incenc,shape=observed),alpha=0.7)+
+      geom_smooth(size=0.5,colour="black",se = F)+
+      geom_hline(yintercept=0, linetype="dashed", color = "black")+
+      geom_vline(xintercept=0, linetype="dashed", color = "black")+ 
+      geom_vline(xintercept=-incentv1, linetype="dashed", color = "black")+ 
+      geom_vline(xintercept=-incentv2, linetype="dashed", color = "black")+
+      annotate("text", y =  limy*2/3, x =0.2, label = "Threshold none",angle=90,size=2,color = "#7FC97F")+
+      annotate("text", y =  limy*2/3, x =(0.2-incentv1), label = "Threshold small",angle=90,size=2, color = "#386CB0")+
+      annotate("text", y =  limy*2/3, x =(0.2-incentv2), label = "Threshold large",angle=90,size=2, color = "#F0027F")+
+      labs(shape="Measurement",color="Incentive")+
+      scale_colour_manual(values=group.colors)+
+      ggtitle("Survey with incentive")+theme_minimal()+
+      theme( legend.position = 'bottom')})
+  
+  
+  output$plot_inc_mean <- renderPlot({ 
+    datasim<-as.data.table(data.sel())
+    summary<-datasim[,.(Meany=mean(y.star,na.rm=T),
+                        Meanry=mean(ry.star,na.rm=T)),
+                     .(incenc)]
+    
+    x1<- summary[incenc%in%c("None","Small"), Meanry]
+    y1 <- summary[incenc%in%c("None","Small"), Meany]
+    x2<- summary[incenc%in%c("Small","Large"), Meanry]
+    y2 <- summary[incenc%in%c("Small","Large"), Meany]
+    slope1 <- diff(y1)/diff(x1)
+    intercept1 <- y1[1]-slope1*x1[1]
+    slope2 <- diff(y2)/diff(x2)
+    intercept2 <- y2[1]-slope2*x2[1]
+    
+    incentv1=max(datasim$incen1)
+    incentv2=max(datasim$incen2)
+    limry<-max(abs(max(datasim$ry.star)),abs(min(datasim$ry.star)))
+    limy<-max(abs(max(datasim$y.star)),abs(min(datasim$y.star)))
+    group.colors <- c("#7FC97F","#386CB0","#F0027F") 
+    ggplot(data= as.data.frame(datasim), aes(ry.star,y.star))+
+      labs(x ="latent propensity of observability(ry*) -->", y = "latent outcome response (y*) --->")+
+      labs(shape="Measurement")+
+      scale_shape_manual(values=c(19,1))+
+      scale_y_continuous(breaks = c(0)) +
+      scale_x_continuous(breaks = c(0))+ 
+      annotate("text", y = -limy/2, x = (-limy-1), label = "HIV-",angle=90,size=2) +
+      annotate("text", y =  limy/2, x = (-limy-1), label = "HIV+",angle=90,size=2)+
+      coord_cartesian(xlim = c(-limry,limry), ylim = c(-limy,limy),clip = "off")+
+      xlab(expression('Latent propensity of observability '(R[i]*'*') %->%''))+
+      ylab(expression('Latent test result ' (Y[i]*'*') %->%''))+
+      theme_minimal()+
+      geom_point(data=summary,aes(x=Meanry,y=Meany,colour=incenc),size=3)+
+      geom_smooth(size=0.5,colour="black",se = F)+
+      labs(shape="Measurement",color="Incentive")+
+      scale_colour_manual(values=group.colors)+
+      ggtitle("Means of incentived patients")+theme_minimal()+
+      theme( legend.position = 'bottom')})
+  
+  output$table_inc <- renderTable({
+    datasim<-as.data.table(data.sel())
+    incen.table<-as.data.table(table(datasim$observed,datasim$ybin0,datasim$incenc))
+    colnames(incen.table)<-c("Measurement","HIVtest","Incentive","N")
+    incen.table[,HIVtest:=ifelse(HIVtest==1,"HIVp","HIVtn")]
+    incen.table<-cast(incen.table, Incentive+HIVtest ~ Measurement)
+    incen.table$Total<-incen.table$Observed+incen.table$Unobserved
+    incen.table<-as.data.table(melt(setDT(incen.table), id.vars = c("Incentive","HIVtest")))
+    incen.table[,Incentive:=factor(Incentive,levels=c("None","Small","Large"))]
+    incen.table<-data.table(cast(incen.table, Incentive+variable ~ HIVtest))
+    rowall<-data.table("-","All",sum(incen.table[variable=="Total",HIVp],na.rm=TRUE),sum(incen.table[variable=="Total",HIVtn],na.rm=TRUE))
+    names(rowall) <- names(incen.table) 
+    incen.table<-rbind(incen.table,rowall)
+    incen.table[,HIV.prev:=round(HIVp/(HIVp+HIVtn)*100,2)]
+    colnames(incen.table)<-c("Incentive","Measurement","HIV+","HIV-","HIV+(%)")
+    incen.table})
+  
+  output$table_imp <-renderTable({
+    Imputationres(datasim=as.data.table(data.sel()))
+    })
+
+``` 
+```{r echo = FALSE}
+ fluidRow(
+    column(12, plotOutput("plot_inc"))
+  )
+``` 
 
 
-```{r echo=FALSE}
-source("mice.impute.heckman.ipd2.R")
-imp_shiny2()
-```
+By using incentives, one can better approximate the curve that relates the latent responses to the selection and outcome responses. Here one can observe how the mean of the groups of people under different types of incentives lie close to the real curve trajectory.
+
+```{r echo = FALSE}
+ fluidRow(
+    column(12, plotOutput("plot_inc_mean"))
+  )
+``` 
+
+Here we also shows a table with the number of individuals and their HIV status when tests were observed and unobserved as a function of incentive allocation. The last row of this table shows the actual HIV status of the patients in the survey.
+
+```{r echo = FALSE}
+ fluidRow(
+    column(12,align="center",tableOutput("table_inc"))
+  )
+``` 
+
+On the simulated data set we applied the following imputation methods to estimate HIV prevalence in the total population:
+
+- **MAR:** here we consider that the missing data follow a mechanistic MAR so we apply the "log.reg" method specified in the mice package.
+
+- **Heckman not ERV:** We applied the heckman imputation method without considering any ERV, i.e. we included the same prediction variables in both the selection and response equations.
+
+- **Heckman inteviewerID:** We also apply the heckman imputation method but this time using as exclusion variable the estimated intercept random effects for each of the interviewers.
+
+- **Heckman single incentive:** we create an indicator variable "small_ incentive" that takes the value of 1 if an individual was awarded a small incentive or 0 otherwise and then use it as the ERV in the Heckman imputation method.
+
+- **Heckman inteviewerID + single incentive:** Here we use the two ERVs defined in the previous two methods (interviewID and small_incentive).
+
+- **Heckman staggered incentive:** we take as ERV the categorical variable that establishes the type of incentive given to the individual, with levels ("none", "small incentive", "large incentive").
+
+The results of each imputation method is shown in the below table:
+
+```{r echo = FALSE}
+ fluidRow(
+    column(12,align="center",tableOutput("table_imp"))
+  )
+``` 
+ 
+ In general, it is observed that when $\rho=0$, the MAR imputation method provides the lowest bias estimates. As $\rho$ moves away from zero, the Heckman imputation methods are observed to provide better estimates of HIV prevalence. Most of the time, it is observed that not using ERV in the Heckman model may result in more biased estimates (Not sure about this as the data were simulated by including the Interviewer ID in the selection model's predictor, so No ERV vs ERV from simulated data is a valid comparison, or in this case it is only a problem of model specification?)
+
+The methods with incentives applied here cannot be technically compared with the first three described (MAR, Heckman no ERV, Heckman interviewerID) since the percentage of missing in HIV test is different. That is, in the database with incentives, the test results of individuals whose consent varied due to the incentive are observed. Comparing the results between the incentive methods generally yielded less biased prevalence estimates in complex incentives (ID and interviewer incentive). The prevalence estimate in these incentive methods is sensitive to the proportion of allocated individuals in each of the incentive groups. 
+ 
+ 
+## Additional functions code
+ 
+```{r analysis, results="markup"}
+
+#' Imputation based on Heckman model for multilevel data.
+#'
+#' Imputes outcome and predictor variables that follow an MNAR mechanism
+#' according to Heckman's model and come from a multilevel database such as
+#' individual participant data.
+#' @aliases mice.impute.2l.heckman 2l.heckman
+#' @param y Vector to be imputed
+#' @param ry Logical vector of length \code{length(y)} indicating the
+#' the subset \code{y[ry]} of elements in \code{y} to which the imputation
+#' model is fitted. The \code{ry} generally distinguishes the observed
+#' (\code{TRUE}) and missing values (\code{FALSE}) in \code{y}.
+#' @param x Numeric design matrix with \code{length(y)} rows with predictors for
+#' \code{y}. Matrix \code{x} may have no missing values.
+#' @param wy Logical vector of length \code{length(y)}. A \code{TRUE} value
+#' indicates locations in \code{y} for which imputations are created.
+#' @param type type of the variable in the prediction model {0: No predictor,
+#' 1: Predictor in both the outcome and selection,-2: Cluster id (study id),
+#' -3: Predictor only in the selection model, -4: Predictor only in the outcome 
+#' model}
+#' @param pmm  predictive mean matching can be applied only for for missing continuous variables: "TRUE","FALSE"
+#' @param meta_method meta_analysis estimation method for random effects :
+#' "ml" (maximum likelihood), "reml" (restricted maximum likelihood) or "mm"
+#' method of moments.
+#' @param ... Other named arguments. Not used.
+#' @name mice.impute.2l.heckman
+#' @return Vector with imputed data, of type binary or continuous
+#' @details Imputation of binary and continuous variables by Heckman model.
+#' This function uses information at the marginal and cluster level to impute
+#' both outcome and predictor variables that are sporadically or systematically
+#' missing in a cluster.
+#' Initially, the function estimates the parameters of the Heckman model for
+#' each cluster in the database using the copula method, and then estimates the
+#' parameters at the marginal level with the help of a random intercept
+#' meta-analysis model.
+#' The individual-level parameters are drawn and missing values are imputed
+#' using Heckman's conditional expectation.
+#'
+#' @note
+#' Binary missing variables should be included as two-level factor type variables,
+#' numerical missing variables will be assumed normally distributed.
+#' In case the Heckman model cannot be estimated at the study level, the 
+#' imputation model is based on the Heckman model without taking into account 
+#' the cluster variable.
+#' Added:
+#' @author Julius Center Methods Group UMC, 2022
+#' @family univariate imputation functions
+#' @keywords datagen
+#'
+#' @export
+#'
+
+
+
+mice.impute.2l.heckman <-function(y,ry,x,wy = NULL, type, pmm = FALSE, meta_method ="reml",...) {
+  
+  install.on.demand("GJRM", ...)
+  install.on.demand("Matrix", ...)
+  install.on.demand("mgcv", ...)
+  install.on.demand("mixmeta", ...)
+  install.on.demand("mvtnorm", ...)
+  install.on.demand("pbivnorm", ...)
+  
+  
+  # 1. Define variables and dataset----
+  
+  # Rename covariates
+  colnames(x) <- paste0("x_", 1:length(colnames(x))) #change the covariates name for avoiding conflicts when y is covariate
+  bos_name <- colnames(x)[type ==  1] # names of variables present in both outcome and selection model
+  sel_name <- colnames(x)[type == -3] # names of variables in selection model alone
+  out_name <- colnames(x)[type == -4] # names of variables in outcome model alone
+  
+  # # Define y type
+  if (class(y) == "factor" & nlevels(y) == 2){
+    message("the missing variable is assumed to be binomially distributed")
+    family <- "binomial"
+  }else{
+    message("the missing variable is assumed to be normally distributed")
+    family <- "gaussian"
+  }
+  
+  
+  # Check if group variable is defined
+  if (length(colnames(x)[type == -2]) == 0) {
+    message("No group variable has been provided, the Heckman imputation model will be applied globally to the dataset.")
+    Grp_est <- 0 # Group indicator 0: Heckman on full dataset, 1: Heckman at cluster level
+  } else {
+    group_name <- colnames(x)[type == -2]
+    names.clust <- as.character(unique(x[, group_name]))
+    Grp_est <- 1
+  }
+  
+  #Define position of selection and outcome in coefficient vector
+  order <- c(sel_name, bos_name, out_name)
+  send <- length(sel_name) + length(bos_name) + 1 # Index where selection equation ends in coefficient vector
+  oend <- send + length(bos_name) + length(out_name) + 1 # Index where outcome equation ends in coefficient vector
+  
+  # Define outcome and selection equation
+  out <- as.formula(paste0("y", "~", paste(c(bos_name,out_name), collapse = "+")))
+  sel <- as.formula(paste0("ry", "~", paste(c(sel_name, bos_name), collapse = "+")))
+  
+  # Define data & prediction matrix
+  data <- data.frame(ry, y, x[, order])
+  X <- data.frame(cbind(Int=rep(1, nrow(x)), x[, order]))
+  
+  # 2. Step 1: Get the theta estimators for each study ----
+  Syst_nest <- Heck_est <- 1
+  if (Grp_est == 1) { #Heckman at cluster level
+    df_list <- split(data, x[, group_name]) 
+    res_total <- suppressWarnings( lapply( df_list, copulaIPD,
+                                           sel = sel, out = out, send = send, family = family)) #Calculate parameters for each study
+    studytype <- sapply(res_total, function(x) x[[2]]) # Specify missing pattern in studies
+    fit_list  <- lapply(res_total, function(x) x[[1]]) # Get the parameter estimates
+    coef_list <- lapply(fit_list[studytype != 0], `[[`, c('coefficients')) # Get effect vector for each study
+    Vb_list   <- lapply(fit_list[studytype != 0], `[[`, c('Vb')) # Get covariance matrix for each study
+    coef_mat_s <- do.call(rbind, coef_list)
+    
+    varnam <- colnames(coef_mat_s)
+    selnam <- varnam[grepl("*_s" , varnam)]
+    outnam <- varnam[!varnam %in% c(selnam, "sigma.star", "theta.star")]
+    
+    # 3. Step 2: Get marginal theta and var(theta) ----
+    
+    if( length(studytype[studytype != 0]) < 2 ){
+      Grp_est <- 0
+    }else{
+      Heck_mod <- get_marginal(coef_mat_s, Vb_list, selnam, outnam, meta_method)
+      Heck_est <- Heck_mod$Mvma_est}
+    Sys.nest <-as.numeric(length(studytype[studytype == 0])==0)
+    
+  } 
+  
+  if (Grp_est == 0 | Heck_est == 0){ # Heckman on full dataset or Heckman model no estimable
+    message("The Heckman model cannot be estimated marginally, so systematically missing groups will be imputed with the Heckman model based on the full dataset.")
+    Heck_mod <- copulaIPD( data = data, sel = sel, out = out, family = family, send = send)
+    
+    if(Heck_mod[[2]] == 0 &(Grp_est==0|Syst_nest==0)){
+      stop("There is insufficient information to impute the Heckman model at the marginal or study level.")
+    }
+  }
+  
+  
+  # 4. Get theta_k and var(theta_k) from full conditional distribution ----
+  if (Grp_est == 1) { # Applies imputation at cluster level
+    for (i in names.clust) { #Loop across studies
+      
+      if (studytype[[i]] == 0) { #systematically missing
+        star <- star_systematic( Heck_mod, send, oend, family)
+        
+      } else { # sporadically missing
+        star <- star_sporadic( Heck_mod,
+                               coef_list_i = coef_list[[i]],
+                               Vb_list_i = Vb_list[[i]], selnam, outnam,family)
+      }
+      
+      Xm <- X[!ry & x[, group_name] == as.numeric(i),]
+      
+      if (nrow(Xm) != 0) { #Cluster with at least one missing value in outcome equation
+        y.star <- gen_y_star( Xm= Xm, sel_name = sel_name, bos_name = bos_name,
+                              out_name =out_name, beta_s_star = star$beta_s_star,
+                              beta_o_star = star$beta_o_star, sigma_star = star$sigma_star,
+                              rho_star = star$rho_star, pmm = pmm, y = y, ry = ry)
+        
+        y[!ry & x[, group_name] == as.numeric(i)] <- y.star
+      }
+    }
+  }else{ # Applies imputation on full dataset
+    
+    star<-star_systematic(Heck_mod, send, oend, family)
+    Xm <- X[!ry,]
+    
+    if (nrow(Xm) != 0) { 
+      y.star <- gen_y_star( Xm= Xm, sel_name = sel_name, bos_name = bos_name,
+                            out_name =out_name, beta_s_star = star$beta_s_star,
+                            beta_o_star = star$beta_o_star, sigma_star = star$sigma_star,
+                            rho_star = star$rho_star, pmm = pmm, y = y, ry = ry)
+      y[!ry] <- y.star
+    }
+  }
+  
+  return(y[!ry])
+}
+
+
+# 0. Define additional functions ----
+
+# F 0.1. CopulaIPD: Apply Binomial or Gaussian model depending on y type
+
+copulaIPD <- function(data, sel, out, family, send) {
+  
+  fit_ind <- 0 # None model estimable for the cluster
+  # A. Estimate Heckman model
+  fit <- try(GJRM::gjrm( formula = list(sel, out),
+                         data = data,
+                         margins = c("probit", ifelse(family=="binomial","probit","N")),
+                         Model = "BSS",
+                         gamlssfit = TRUE,
+                         extra.regI = "sED",
+                         parscale = TRUE),
+             silent = TRUE)
+  
+  
+  
+  if (!any(inherits(fit, "try-error"))) {
+    # model is estimable
+    ev <- eigen(fit$fit$hessian, symmetric = TRUE, only.values = TRUE)$values
+    convh <- min(ev) > 0 # convergence based on hessian positive definiteness
+    convg <- max(abs(fit$fit$gradient)) < 10 # convergence based on abs max gradient
+    
+    #MAR indication 
+    CIcon<-summary(fit)$ CItheta 
+    MNAR_ind<-!(abs(CIcon[[1]]-CIcon[[2]])<0.001&CIcon[[1]]<0&CIcon[[2]]>0) # exclusion of cases that blow up variance
+    
+    if (MNAR_ind){
+      fit_ind <- 2
+      if (convh & convg) {
+        # MNAR estimable
+        fit_ind <- 1 # Heckman model estimable for the cluster
+      }
+    }
+  }
+  
+  if( fit_ind ==2){
+    fit<-NULL
+    gam1 <- try(mgcv::gam(formula=sel,data = data,family = "binomial", method ="REML"))
+    gam2 <- try(mgcv::gam(formula=out,data = data,family = family, method ="REML"))
+    
+    if(!any(inherits(gam1, "try-error"))&!any(inherits(gam2, "try-error"))){
+      coefficients <- c(gam1$coefficients,gam2$coefficients)
+      if(all(!is.na(coefficients))){
+        s     <- ifelse(family != "binomial",1,0) 
+        ncol1 <- ncol(gam1$Vp)
+        ncol2 <- ncol(gam2$Vp)
+        Vb    <- matrix(0,ncol = ncol1+ncol2+1+s, nrow = ncol1+ncol2+1+s)
+        Vb[1:ncol1,1:ncol1] <- gam1$Vp
+        Vb[(ncol1+1):(ncol1+ncol2),(ncol1+1):(ncol1+ncol2)] <- gam2$Vp
+        
+        if (family != "binomial") {
+          coefficients <- c(coefficients, sigma.star = log(sqrt(gam2$scale)))
+          Vb[(ncol1+ncol2+1),(ncol1+ncol2+1)] <- gam2$V.sp}
+        
+        fit$coefficients <- c(coefficients,theta.star=0)
+        fit$Vb  <- Vb
+        fit_ind <- 2}
+    }
+    
+  }
+  
+  if (fit_ind != 0) {
+    names <- c(paste0(names(fit$coefficients)[1:send], "_s"),
+               names(fit$coefficients[(send + 1):length(names(fit$coefficients))]))
+    names(fit$coefficients) <- names
+    colnames(fit$Vb) <- names
+    rownames(fit$Vb) <- names
+  }else{
+    fit <- NA}  
+  
+  return(list(fit, fit_ind))
+  
+}
+
+# F 0.2. cov_mat_vector: Transform covariance matrix in a ordered vector
+cov_mat_vector <- function(cov_mat, vnames) {
+  cov_mat[upper.tri(cov_mat)] <- "Up"
+  cov_vec <- as.vector(cov_mat[vnames, vnames])
+  cov_vec <- as.numeric(cov_vec[cov_vec != "Up"])
+  return(cov_vec)
+  
+}
+# F 0.3. draw_theta_psi_mar: Estimate true effect size and draw a marginal theta and psi=var(theta) .
+
+draw_theta_psi_mar <- function(coef_mat_s, Vb_list, meta_method, Mvma_est, vnames = NULL) {
+  
+  theta_star <- NA
+  psi_star <- NA
+  
+  if (is.null(vnames)) { #use all set of parameters
+    vnames <- colnames(coef_mat_s)
+  }
+  
+  # Get covariance matrix
+  coef_mat_s <- coef_mat_s[, vnames]
+  cov_mat_s <- do.call("rbind", lapply(Vb_list, cov_mat_vector, vnames = vnames))
+  
+  # Apply multivariate random-effects meta-analysis
+  mvma <- suppressWarnings(try(mixmeta::mixmeta(coef_mat_s,cov_mat_s, method = meta_method,
+                                                control = list(hessian = TRUE)), silent = TRUE))
+  
+  if (inherits(mvma,"try-error")) { # Use mm instead
+    meta_method = "mm"
+    mvma <- suppressWarnings(try(mixmeta::mixmeta(coef_mat_s, cov_mat_s, method = meta_method,
+                                                  control = list(hessian = TRUE)),silent = TRUE))
+    
+    if (inherits(mvma,"try-error")) { # MA can not be estimated
+      Mvma_est <- 0}
+  }
+  
+  
+  if (Mvma_est == 1) {
+    # Draw effects theta_star
+    theta_star <- MASS::mvrnorm(n = 1, mu = coef(mvma), Sigma = vcov(mvma))
+    
+    if (meta_method != "mm") {
+      # Draw random effect, psi_star
+      if (length(vnames) == 1) {
+        qrsh <- 1 / mvma$hessian
+      } else {
+        Hes <- as.matrix(Matrix::forceSymmetric(mvma$hessian))
+        qrsh <- as.matrix(Matrix::nearPD(MASS::ginv(-Hes))$mat)
+      }
+      
+      rpar <- mvtnorm::rmvnorm(1, mean = mvma$par, sigma = qrsh, method = "svd")
+      
+      if (length(vnames) == 1) {
+        psi_star <- rpar ^ 2
+      } else {
+        psi <- matrix(0, ncol(mvma$Psi), ncol(mvma$Psi))
+        psi[lower.tri(psi, diag = TRUE)] <- rpar
+        psi_star <- Matrix::tcrossprod(psi)
+        
+      }
+      
+    } else # meta_method== reml OR ml
+      psi_star <- mvma$Psi
+  }
+  
+  colnames(psi_star) <- names(theta_star)
+  rownames(psi_star) <- names(theta_star)
+  
+  return(list(theta_star, psi_star, Mvma_est))
+  
+}
+
+# F 0.4 Conditional posterior distribution
+draw_cond_theta <- function(theta_mar, theta_k, var_theta_k, vnames) {
+  W_m <- MASS::ginv(theta_mar[[2]])
+  W_k <- MASS::ginv(var_theta_k[vnames, vnames])
+  S <- MASS::ginv(W_m + W_k)
+  mu <- S %*% (W_k %*% as.vector(theta_k[vnames]) + W_m %*% as.vector(theta_mar[[1]]))
+  theta_star_i <- MASS::mvrnorm(n = 1, mu = as.vector(mu), Sigma = S)
+  return(theta_star_i)
+}
+
+
+# F 0.5 Get marginal draws
+get_marginal <- function(coef_mat_s, Vb_list, selnam, outnam, meta_method ){
+  
+  beta_s = beta_o = rho_t = sigma_t = NA
+  Mvma_est <- 1
+  
+  # separate the set of parameters in beta_out, beta_s and rho
+  
+  beta_o <- draw_theta_psi_mar( coef_mat_s = coef_mat_s,
+                                Vb_list = Vb_list,
+                                vnames = outnam,
+                                meta_method = meta_method,
+                                Mvma_est = Mvma_est)
+  beta_s <- draw_theta_psi_mar( coef_mat_s = coef_mat_s,
+                                Vb_list = Vb_list,
+                                vnames = selnam,
+                                meta_method = meta_method,
+                                Mvma_est = beta_o[[3]])
+  rho_t <- draw_theta_psi_mar( coef_mat_s = coef_mat_s,
+                               Vb_list = Vb_list,
+                               vnames = "theta.star",
+                               meta_method = meta_method,
+                               Mvma_est = beta_s[[3]]) #copula package calls atanh(rho) as theta.star
+  
+  if ("sigma.star"%in%colnames(coef_mat_s)) {
+    sigma_t <- draw_theta_psi_mar( coef_mat_s = coef_mat_s,
+                                   Vb_list = Vb_list,
+                                   vnames = "sigma.star",
+                                   meta_method = meta_method,
+                                   Mvma_est = rho_t[[3]]) #copula package calls log(sigma) as sigma.star
+    Mvma_est <- sigma_t[[3]]
+  }
+  
+  
+  
+  return (list ( beta_s = beta_s,
+                 beta_o = beta_o,
+                 rho_t = rho_t,
+                 sigma_t = sigma_t,
+                 Mvma_est = Mvma_est))
+}
+
+
+
+# F 0.6 Get draw from systematically missing groups
+star_systematic <- function(Heck_mod, send, oend, family){
+  
+  if (is.null(Heck_mod$Mvma_est)){ # From total data model
+    star <- mvtnorm::rmvnorm( 1, mean = Heck_mod[[1]]$coefficients,
+                              sigma = Heck_mod[[1]]$Vb, method = "svd")
+    
+    beta_o_star <- star[(send + 1):oend]
+    beta_s_star <- star[1:send]
+    rho_star <- tanh(star[, "theta.star"])
+    sigma_star <- ifelse(family=="gaussian",
+                         exp(star[, "sigma.star"]), NA)
+    
+    
+  } else { # From meta model
+    
+    beta_o_star <- MASS::mvrnorm(n = 1, mu = Heck_mod$beta_o[[1]],Sigma =Heck_mod$beta_o[[2]])
+    beta_s_star <- MASS::mvrnorm(n = 1, mu = Heck_mod$beta_s[[1]],Sigma = Heck_mod$beta_s[[2]])
+    rho_star <- tanh(MASS::mvrnorm( n = 1, mu = Heck_mod$rho_t[[1]],Sigma = Heck_mod$rho_t[[2]]))
+    if (family =="gaussian") {
+      sigma_star <- exp(MASS::mvrnorm( n = 1, mu = Heck_mod$sigma_t[[1]],
+                                       Sigma = Heck_mod$sigma_t[[2]])) #copula package calls log(sigma) as sigma.star
+    } else { #binomial
+      sigma_star <- NA}
+  }
+  
+  return (list (beta_s_star = beta_s_star,
+                beta_o_star = beta_o_star,
+                rho_star = rho_star,
+                sigma_star = sigma_star))}
+
+
+## F 0.7 Get draw from sporadically missing groups
+star_sporadic <- function(Heck_mod, coef_list_i, Vb_list_i, selnam, outnam, family){
+  
+  beta_s_star = beta_o_star = sigma_star = rho_star = NA
+  cond <- ifelse(is.null(Heck_mod$Mvma_est),0,Heck_mod$Mvma_est)
+  
+  if (cond == 1){ # Draw study parameters from conditional distribution
+    beta_o_star <- draw_cond_theta( theta_mar = Heck_mod$beta_o, theta_k = coef_list_i,
+                                    var_theta_k = Vb_list_i, vnames = outnam)
+    beta_s_star <- draw_cond_theta( theta_mar = Heck_mod$beta_s,theta_k = coef_list_i,
+                                    var_theta_k = Vb_list_i, vnames = selnam)
+    
+    rho_star <- tanh( draw_cond_theta( theta_mar = Heck_mod$rho_t,
+                                       theta_k = coef_list_i,
+                                       var_theta_k = Vb_list_i,
+                                       vnames = "theta.star")) #copula package calls atanh(rho) as theta.star
+    
+    if (family == "gaussian") {
+      sigma_star <- exp(draw_cond_theta( theta_mar = Heck_mod$sigma_t,
+                                         theta_k = coef_list_i,
+                                         var_theta_k = Vb_list_i,
+                                         vnames = "sigma.star"))#copula package calls log(sigma) as sigma.star
+    }
+    
+    
+  } else { # Draw from study parameters from study distribution
+    
+    beta_o_star <- MASS::mvrnorm(n = 1,mu = coef_list_i[outnam],Sigma = Vb_list_i[outnam, outnam])
+    beta_s_star <- MASS::mvrnorm(n = 1,mu = coef_list_i[selnam],Sigma = Vb_list_i[selnam, selnam])
+    rho_star <- tanh(MASS::mvrnorm( n = 1, mu = coef_list_i["theta.star"],
+                                    Sigma = Vb_list_i["theta.star", "theta.star"]))
+    if (family == "gaussian") {
+      sigma_star <- exp(MASS::mvrnorm( n = 1, mu = coef_list_i["sigma.star"],
+                                       Sigma = Vb_list_i["sigma.star", "sigma.star"]))#copula package calls log(sigma) as sigma.star
+    }
+    
+  }
+  
+  return (list ( beta_s_star = beta_s_star,
+                 beta_o_star = beta_o_star,
+                 rho_star = rho_star,
+                 sigma_star = sigma_star))
+}
+
+
+# F 0.8 Generate the imputation values
+
+gen_y_star <- function(Xm, sel_name, bos_name, out_name, beta_s_star, beta_o_star,
+                       sigma_star,rho_star, pmm, y, ry) {
+  
+  XOBO <- data.matrix(Xm[,colnames(Xm) %in% c("Int",bos_name,out_name)]) %*% as.vector(beta_o_star)
+  XSBS <- data.matrix(Xm[,colnames(Xm) %in% c("Int",sel_name,bos_name)]) %*% as.vector(beta_s_star)
+  
+  if (!is.na(sigma_star)) { # normal missing variable
+    
+    Ratio <- (-stats::dnorm(XSBS) / (stats::pnorm(-XSBS)))
+    Ratio[is.na(Ratio) | is.infinite(Ratio)] <- 0.0
+    y.star <- XOBO + as.numeric(sigma_star) * as.numeric(rho_star) * Ratio +
+      rnorm(nrow(XSBS), 0, sd = sigma_star)
+    
+    if (pmm == TRUE) {
+      idx <- mice::matchindex(y[ry == 1], y.star)
+      y.star <- y[ry == 1][idx]
+    }
+    
+  } else { #binomial missing variable
+    
+    p.star <- pbivnorm::pbivnorm(as.vector(XOBO),-as.vector(XSBS),
+                                 -as.numeric(rho_star)) / stats::pnorm(-XSBS)
+    p.star[is.na(p.star) | (is.infinite(p.star) & p.star < 0) |p.star < 0.0 |
+             p.star == "0"] <- 0.0
+    p.star[p.star > 1.0 | p.star == "1" |(is.infinite(p.star) & p.star > 0)] <- 1.0
+    
+    y.star <-rep(levels(y)[1],nrow(XOBO))
+    y.star[runif(nrow(XOBO)) < p.star]<-levels(y)[2]
+    
+  }
+  
+  return(y.star)
+}
+
+# F 0.9 Taken from mice package ---
+install.on.demand <- function(pkg, quiet = FALSE, ...) {
+  # internal function that checks whether package pkg is
+  # in the library. If not found, it asks the user permission
+  # to install from CRAN.
+  if (requireNamespace(pkg, quietly = TRUE)) {
+    return()
+  }
+  if (interactive()) {
+    answer <- askYesNo(paste("Package", pkg, "needed. Install from CRAN?"))
+    if (answer) install.packages(pkg, repos = "https://cloud.r-project.org/", quiet = quiet)
+  }
+}
+
+
+# Prevalence functions ----
+logit <- function(x) {log(x/(1-x))}
+inv.logit <- function(x) {1/(1+exp(-x))}
+inv.logit.SE<- function(logit.se, c) {logit.se * (c*(1-c))}
+
+
+#Function for calculating prevalence CI
+f.prevalence <- function(data,outcome_name) {
+  a<-summary(data[,get(outcome_name)])
+  b<-prop.test(x = a[[2]], n = sum(a), correct = TRUE)
+  prop<-b$estimate[[1]]
+  ci<-b$conf
+  return(list(prevalence= prop,ci.l=ci[1], ci.u=ci[2]))
+}
+
+#Function to calculate pooled prevalence across imputed datasets 
+prevalence.pool<-function(data, outcome_name) {
+  m <-length(unique(data$.imp))
+  #Calculate prevalence per imputed dataset
+  inc.outcome<-setDT(data)[, f.prevalence(data=.SD, outcome_name=outcome_name), by = list(.imp)]
+  
+  #Replace 0's by 0.000001
+  inc.outcome$prevalence[inc.outcome$prevalence==0]<-0.000001
+  inc.outcome$ci.l[inc.outcome$ci.l==0]<-0.000001
+  
+  #Logit transformation
+  inc.outcome[,logit.prevalence:=logit(prevalence)]
+  inc.outcome[,logit.ci.l:=logit(ci.l)]
+  inc.outcome[,logit.ci.u:=logit(ci.u)]
+  inc.outcome[,logit.se:=(logit.ci.u-logit.ci.l)/(2*1.96)]
+  
+  logit.abs <- mean(inc.outcome$logit.prevalence)
+  within <- mean(inc.outcome$logit.se^2)
+  between <- (1 + (1/m)) * var(inc.outcome$logit.prevalence)
+  logit.var <- within + between
+  logit.se <- sqrt(logit.var)
+  logit.ci.lb <- logit.abs + qnorm(0.05/2)*logit.se
+  logit.ci.ub <- logit.abs + qnorm(1 - 0.05/2)*logit.se
+  
+  prevalence<-inv.logit(logit.abs)*100
+  ci.lb<-inv.logit(logit.ci.lb)*100
+  ci.ub<-inv.logit(logit.ci.ub)*100
+  return(c(prevalence,ci.lb,ci.ub))
+}
+

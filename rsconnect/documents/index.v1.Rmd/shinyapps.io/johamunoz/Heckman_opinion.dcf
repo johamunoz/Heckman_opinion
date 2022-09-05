@@ -1,13 +1,13 @@
 name: Heckman_opinion
-title:
+title: Heckman_opinion
 username:
 account: johamunoz
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 6751450
-bundleId: 6262577
+bundleId: 6184615
 url: https://johamunoz.shinyapps.io/Heckman_opinion/
-when: 1662120977.85355
-lastSyncTime: 1662120977.85356
+when: 1660068379.56613
+lastSyncTime: 1660068379.56614
 asMultiple: FALSE
 asStatic: FALSE
