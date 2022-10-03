@@ -13,9 +13,11 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 # {.tabset}
 
 ## Applied example
-This document will help you to understand the Heckman model concepts in a more graphical way. Here we used the HIV dataset simulated by Marra (2009). The original dataset mimics a HIV survey conducted in Zambia in 9 regions, where 17 different covariates were collected. Here, to make more easy the explanation, we focus in the region # 5, and we only use 5 predictors: age, marital status (marital), use of condom in the last relationship (condom), HIV risk of the patient (highhiv) and interviewer identity (InterviewerID).
+This document will help you understand the concepts of the Heckman model in a more graphical way. Here we use the HIV dataset simulated by Marra (2009). The original data set mimics an HIV survey conducted in Zambia in 9 regions, in which 17 different covariates were collected. Here, for ease of explanation, we focus on region #5, and only use 5 predictors: age, marital status (marital), condom use at last intercourse (condom), patient HIV risk (highhiv), and interviewer identity (InterviewerID).
 
-Here we assumed that the first 4 predictors variables are included in both the outcome and selection model. In addition, on the selection equation we included interviewerID as exclusion restriction variable. Therefore, the Heckman model can be described then by the following equations:
+Here we assume that the first 4 predictor variables are included in both the outcome and selection models. In addition, in the selection equation we include InterviewerID as an exclusion constraint variable. Thus, the Heckman model can then be described by the following equations:
+
+Translated with www.DeepL.com/Translator (free version)
 ```{r heck1, echo=FALSE, out.width = '70%'}
 knitr::include_graphics("Heckman_model.png")
 ```
@@ -130,7 +132,7 @@ Here we simulate a database with the same predictors we used in the previous tab
 ```{r echo = FALSE}
 fluidRow(
     column(12,align="center", sliderInput("x0", "rho:",
-                          min=-1, max=1, value=-1, step=0.1))
+                          min=-1, max=1, value=-0.8, step=0.1))
   )
 ```
 In the figures below we observe that by varying $\rho$ not only does the relationship between the errors of both equations vary (figure on the left), but also the relationship between the latent responses varies (smooth line in the figure on the right).
@@ -226,7 +228,7 @@ In this tab we visualize how the use of incentives such as ERV affects the imput
    #sliderInput("p","Proportion incentive",min = 0,max = 1,value =c(0.85,0.95),step=0.01)
 
 fluidRow(
-    column(6, sliderInput("x", "rho:",min=-1, max=1, value=1, step=0.1)),
+    column(6, sliderInput("x", "rho:",min=-1, max=1, value=-0.8, step=0.1)),
     column(6, sliderInput("p","Proportion incentive",min = 0,max = 1,value =c(0.85,0.95),step=0.01))
   )
 
@@ -348,16 +350,7 @@ data.sel <- reactive({
   )
 ``` 
 
-
-By using incentives, one can better approximate the curve that relates the latent responses to the selection and outcome responses. Here one can observe how the mean of the groups of people under different types of incentives lie close to the real curve trajectory.
-
-```{r echo = FALSE}
- fluidRow(
-    column(12, plotOutput("plot_inc_mean"))
-  )
-``` 
-
-Here we also shows a table with the number of individuals and their HIV status when tests were observed and unobserved as a function of incentive allocation. The last row of this table shows the actual HIV status of the patients in the survey.
+Here we  show a table with the number of individuals and their HIV status when tests were observed and unobserved as a function of incentive allocation. The last row of this table shows the actual HIV status of the patients in the survey.
 
 ```{r echo = FALSE}
  fluidRow(
@@ -387,9 +380,9 @@ The results of each imputation method is shown in the below table:
   )
 ``` 
  
- In general, it is observed that when $\rho=0$, the MAR imputation method provides the lowest bias estimates. As $\rho$ moves away from zero, the Heckman imputation methods are observed to provide better estimates of HIV prevalence. Most of the time, it is observed that not using ERV in the Heckman model may result in more biased estimates (Not sure about this as the data were simulated by including the Interviewer ID in the selection model's predictor, so No ERV vs ERV from simulated data is a valid comparison, or in this case it is only a problem of model specification?)
+ In general, it is observed that when $\rho=0$, the MAR imputation method provides the lowest bias estimates. As $\rho$ moves away from zero, the Heckman imputation methods are observed to provide better estimates of HIV prevalence. Most of the time, it is observed that not using ERV in the Heckman model may result in more biased estimates.
 
-The methods with incentives applied here cannot be technically compared with the first three described (MAR, Heckman no ERV, Heckman interviewerID) since the percentage of missing in HIV test is different. That is, in the database with incentives, the test results of individuals whose consent varied due to the incentive are observed. Comparing the results between the incentive methods generally yielded less biased prevalence estimates in complex incentives (ID and interviewer incentive). The prevalence estimate in these incentive methods is sensitive to the proportion of allocated individuals in each of the incentive groups. 
+The incentive methods applied here cannot be technically compared with the first three described (MAR, Heckman without VRE, Heckman interviewerID), since the percentage of absence from HIV testing is different. That is, in the scenarios with incentives, we additionally observe the test results of individuals whose consent varied due to the incentive. In general, however, we found that the complex incentive methods (ID and interviewer incentive, staggered incentives) generally yielded less biased prevalence estimates. In addition, we found that the prevalence estimate is sensitive to the proportion of individuals assigned to each of the incentive groups.  
  
  
 ## Additional functions code

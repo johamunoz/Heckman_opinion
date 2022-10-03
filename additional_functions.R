@@ -263,3 +263,4 @@ data_mod <- function(rho, prop, incentv1,incentv2) {
   ldatasim<-list(datasim_norm,datasim_skew)
   ldatasim[[1]]
 }
+
