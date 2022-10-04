@@ -13,26 +13,26 @@ knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 # {.tabset}
 
 ## Applied example
-This document will help you understand the concepts of the Heckman model in a more graphical way. Here we use the HIV dataset simulated by Marra (2009). The original data set mimics an HIV survey conducted in Zambia in 9 regions, in which 17 different covariates were collected. Here, for ease of explanation, we focus on region #5, and only use 5 predictors: age, marital status (marital), condom use at last intercourse (condom), patient HIV risk (highhiv), and interviewer identity (InterviewerID).
+This document will help you understand the concepts of the Heckman model in a more graphical way. Here we use the HIV dataset (Marra & Radice,2022) loaded directly from the GJRM R package. The data set mimics an HIV survey conducted in Zambia in 9 regions, in which 17 different covariates were collected. Here, for ease of explanation, we focus on region #5, and only use 5 predictors: age, marital status (marital), condom use at last intercourse (condom), patient HIV risk (highhiv), and interviewer identity (InterviewerID).
 
-Here we assume that the first 4 predictor variables are included in both the outcome and selection models. In addition, in the selection equation we include InterviewerID as an exclusion constraint variable. Thus, the Heckman model can then be described by the following equations:
+Here we assume that the first 4 predictor variables are included in both the outcome and selection models. In addition, in the selection equation we include InterviewerID as an exclusion restriction variable. Thus, the Heckman model can then be described by the following equations:
 
-Translated with www.DeepL.com/Translator (free version)
 ```{r heck1, echo=FALSE, out.width = '70%'}
 knitr::include_graphics("Heckman_model.png")
 ```
 
-Here $y_i^*$ and $r_i^*$ are latent variables or unobservable in the given dataset. But they are related to the observed variables $r_i$ indicator of hivconsent (hivconsent) and $y_i$ the observed hiv test result (hivtest).
+Here $y_i^*$ and $r_i^*$ are latent variables that are related to the observed variables $r_i$ indicator of hivconsent (hivconsent) and $y_i$ the observed hiv test result (hivtest).
 
 ```{r heck2, echo=FALSE, out.width = '70%'}
 knitr::include_graphics("latent.png")
 ```
-Initially we load the package and the original dataset, and we filter out the region #5 and the included variables.
+
+Initially we load the package and the original dataset, and we filter out the region #5 and the selected variables.
+
 ```{r data, warning=FALSE}
 library(GJRM)
 library(data.table)
 library(mice)
-library(dplyr)
 library(lme4)
 
 data("hiv")
@@ -54,14 +54,14 @@ colnames(reffect)     <- c("IDreffect","interviewerID")
 samp.hiv  <-  merge(samp.hiv, reffect, by="interviewerID", all.x=TRUE)
 ```
 
-There are different functions available in R that can be used to impute missing variables that follow a MNAR mechanism according to the Heckman model. For example, within the R package GJRM (Marra & Radice,2022), the mice imputation method "copulaSS" can be used to impute missing data based on a Heckman model and copula functions. Similarly, the function mice.impute.heckprob() from the R package MICEMNAR described in Galimard et al (2016,2018) can also be used. Here we use an imputation method that we have coded ourselves for hierarchical datasets, but which can also be used for non-clustered datasets. The functions used in this example can be found in the "Additional functions code" tab.
+There are different functions available in R that can be used to impute missing variables that follow a MNAR mechanism according to the Heckman model. For example, within the R package GJRM (Marra & Radice,2022), the mice imputation method "copulaSS" can be used to impute missing data based on a Heckman copula model. Similarly, the function mice.impute.heckprob() from the R package MICEMNAR described in Galimard et al (2016,2018) can also be used. Here we use an imputation method that we have coded ourselves for hierarchical datasets, but which can also be used for non-clustered datasets. The functions used in this example can be found in the "Additional functions code" tab.
 
 ```{r Impute, include=FALSE}
 source("mice.impute.2l.heckman.R")
 source("additional_functions.R")
 ```
 
-In the model we chose to include a smoothed term of the age variable. Because our imputation method is not possible to include the smoothed term, we precompute the smoothed age terms and store them in the dataset as individual variables. Before performing imputation, we removed redundant terms (due to multicollinearity problems), and ensured that the response variable was included as a factor variable. 
+In the model we chose to include a smoothed term of the age variable. Because our imputation method is not possible to include the smoothed term, we precompute the smoothed age terms and store them in the dataset as individual variables. Before performing the imputation, we removed redundant terms (due to multicollinearity problems), and ensured that the response variable was included as a factor variable. 
 ```{r smooth}
 mod  <- gam(hivconsent~ -1 + s(age) ,data = samp.hiv[,c("age","hivconsent")])
 sage <- as.data.table( model.matrix( mod ) )
@@ -73,14 +73,14 @@ samp.hiv$hivconsent <- NULL
 samp.hiv$hiv <- as.factor(samp.hiv$hiv)
 ```
 
-Next we specify the prediction (pred0) and methods(meth0) objects which are required as parameters in the mice function.
+Next we specify the prediction (pred0) and methods (meth0) objects which are required as parameters in the mice function.
 ```{r Impute1}
   ini   <- mice(samp.hiv, maxit = 0)
   meth0 <- ini$method
   pred0 <- ini$pred
 ```
 
-Initially, we impute the missing variable hiv using the "pmm" method that follows a MAR mechanism assumption.
+Initially, we impute the missing variable hiv using the "log.reg" method that follows a MAR mechanism assumption.
 ```{r Impute2}
   meth0
   pred0[ "hiv", ] 
@@ -95,7 +95,7 @@ imp_mar <- mice( data = samp.hiv, # dataset with missing values
                 maxit = 1 )
 ```
 
-Next, we impute the hiv variable assuming it follows an MNAR mechanism. We must specify in the method object (meth0) that the hiv variable will be imputed with the imputation based on the Heckman model with the name "2l.heckman". In addition, in the prediction object (pred0), we must set all predictors included in the outcome and selection equation as "1", and the exclusion constraint variable as "-3".
+Next, we impute the hiv variable assuming it follows an MNAR mechanism. We must specify in the method object (meth0) that the hiv variable will be imputed with the imputation based on the Heckman model with the name "2l.heckman". In addition, in the prediction object (pred0), we must set all predictors included in the outcome and selection equation as "1", and the exclusion restriction variable as "-3".
 
 ```{r Impute4}
 meth0[ c("hiv") ] <- "2l.heckman"
@@ -104,7 +104,7 @@ pred0[ "hiv", "IDreffect"] <- -3
 pred0[ "hiv", ] 
 ```
 
-Next, we pass by the meth0 and pred0 objects in the mice function as we did before.
+Next, we pass by the meth0 and pred0 objects into the mice function as we did it before.
 ```{r Impute5,echo = T, results = 'hide'}
 imp_heck <- mice( data = samp.hiv, # dataset with missing values
                      m = 10,   # number of imputations
@@ -113,7 +113,7 @@ imp_heck <- mice( data = samp.hiv, # dataset with missing values
                  maxit = 1)
 ```
 
-Finally, we cluster the results using Rubin's rule for each of the imputed datasets, we use the prevalence.pool function which is also available in the “Additional functions code” tab.
+Finally, we pooled the results using Rubin's rule for each of the imputed datasets. Here we use the prevalence.pool function which is also available in the “Additional functions code” tab.
 
 ```{r rubins,echo = T}
   mar_res  <- prevalence.pool(data = complete( imp_mar, "long"),outcome_name = "hiv")
@@ -123,19 +123,19 @@ Finally, we cluster the results using Rubin's rule for each of the imputed datas
   setDT(res)[,c( "method","prevalence","ci.lb","ci.ub")]
 ```
 
-From the imputation results, we observe that HIV prevalence from MAR imputation (`r round(res$prevalence[1],2)` %) is close to the prevalence obtained from observable data alone (17.7%). Imputation based on the Heckman imputation model (`r round(res$prevalence[2],2)`%) shows that HIV prevalence could be higher than observed prevalence, suggesting that patients with HIV+ testing are more reluctant to provide HIV consent.
+From the imputation results, we observe that HIV prevalence from MAR imputation (`r round(res$prevalence[1],2)` %) is close to the prevalence obtained from observable data alone (17.7%). Imputation based on the Heckman imputation model (`r round(res$prevalence[2],2)`%) shows that HIV prevalence could be higher than observed prevalence, suggesting that HIV+ patients are more reluctant to provide HIV test consent.
 
 ## Variation of $\rho$
 
 In this tab, you can better visualize how the variation of $\rho$, the correlation parameter between the outcome equation and the selection equation, affects the estimated HIV prevalence in situations where there is selection bias. 
-Here we simulate a database with the same predictors we used in the previous tab but by setting the $\rho$ value of your preference (please set the value in the slider below)
+Here we rely on the same HIV survey we used before but this time we vary the value of $rho$ (please set the value of your preference in the slider below).
 ```{r echo = FALSE}
 fluidRow(
     column(12,align="center", sliderInput("x0", "rho:",
                           min=-1, max=1, value=-0.8, step=0.1))
   )
 ```
-In the figures below we observe that by varying $\rho$ not only does the relationship between the errors of both equations vary (figure on the left), but also the relationship between the latent responses varies (smooth line in the figure on the right).
+In the following figures, we observe that varying $rho$ not only varies the relationship between the errors in both equations (figure on the left), but also varies the relationship between the latent responses (smooth line in the figure on the right).
 
 ```{r echo = FALSE}
  data.sel0 <- reactive({
@@ -200,7 +200,7 @@ fluidRow(
   )
 
 ```
-The prevalence estimate can best be seen in the table below which shows the total number of HIV+ and HIV- tests according to whether observations were measured or not and the estimated prevalence in each of these groups. The actual prevalence in the total simulated population can also be seen. 
+The estimate of HIV prevalence can best be seen in the following table, which shows the number of HIV+ and HIV- patients who accepted and refused to undergo HIV testing. The actual HIV prevalence in the total simulated population can also be seen.
 
 ```{r echo = FALSE}
 fluidRow(
@@ -208,18 +208,18 @@ column(12,align="center",tableOutput("table_noinc"))
 )
 ```
 
-For example, when $\rho=-1$ the value of an unobservable variable, such as distrust in the healthcare system, makes the error terms inversely proportional. Therefore, an increase in the unobservable variable results in a decrease in the propensity to participate ($r_i$) and an increase in the probability of a positive HIV result ($y_i$). This can also be glimpsed in the prevalence table, where the actual prevalence of HIV+ cases (HIV+ in all patients = 22%) is underestimated by estimating the prevalence only in observed patients (HIV only in observed patients = 9%).
+For example, when $rho=-1$ the value of an unobservable variable, such as distrust in the health care system, makes the error terms of both equations inversely proportional. Therefore, an increase in such an unobservable variable results in a decrease in the propensity to participate ($r_i$) and an increase in the probability of obtaining an HIV+ result ($y_i$). This can also be glimpsed in the prevalence table, where the true prevalence of HIV+ cases (HIV+ in all patients = 22%) is underestimated based only on observed patients (HIV only in observed patients = 9%).
 
-When $\rho=0$ , the data set follows a MAR mechanism in which error terms occur independently and randomly and thus do not affect the trend of latent responses. In this way the prevalence of the total population (22%) can be approximated by the prevalence based only on observable patients (23%).
+When $rho=0$ , the data set follows a MAR mechanism in which the error terms occur independently and randomly and thus do not affect the trend of the latent responses. Thus, the prevalence of the total population (22%) can be approximated by the HIV prevalence based only on observable patients (23%).
 
-On the other hand, when $\rho= 1$, we are in a situation where there is an unobservable variable, such as testing being a requirement for access to an antiretroviral therapy (ART) program, which makes patients more likely to be HIV-positive more willing to consent. Therefore, in this situation the prevalence in the whole population (HIV+ in all patients = 22%) is overestimated based only on observable patients (HIV only in observed patients = 28%).
+On the other hand, when $\rho= 1$, we are in a situation where there is an unobservable variable, such as HIV testing being a requirement for access to an antiretroviral therapy (ART) program, which makes patients more likely to be HIV+ more willing to consent to testing. Therefore, in this situation the prevalence in the whole population (HIV+ in all patients = 22%) is overestimated based only on observable patients (HIV only in observed patients = 28%).
 
 
 
 
 ## Incentive as ERV
 
-In this tab we visualize how the use of incentives such as ERV affects the imputation results. Besides the $\rho$ slider, we have added a slider where the proportion of patients with no incentive (leftmost part of the slider), those who received a small incentive (middle part of the slider) and those who received a high incentive (rightmost part of the slider) can be specified.
+In this tab we visualize how the use of incentives as ERV affects the imputation results. In addition to the $rho$ slider, we have added a slider where you can specify the proportion of patients with no incentives (leftmost part of the slider), those who received a small incentive (middle part of the slider) and those who received a high incentive (rightmost part of the slider).
 
 ```{r echo = FALSE}
 
@@ -282,47 +282,7 @@ data.sel <- reactive({
       ggtitle("Survey with incentive")+theme_minimal()+
       theme( legend.position = 'bottom')})
   
-  
-  output$plot_inc_mean <- renderPlot({ 
-    datasim<-as.data.table(data.sel())
-    summary<-datasim[,.(Meany=mean(y.star,na.rm=T),
-                        Meanry=mean(ry.star,na.rm=T)),
-                     .(incenc)]
-    
-    x1<- summary[incenc%in%c("None","Small"), Meanry]
-    y1 <- summary[incenc%in%c("None","Small"), Meany]
-    x2<- summary[incenc%in%c("Small","Large"), Meanry]
-    y2 <- summary[incenc%in%c("Small","Large"), Meany]
-    slope1 <- diff(y1)/diff(x1)
-    intercept1 <- y1[1]-slope1*x1[1]
-    slope2 <- diff(y2)/diff(x2)
-    intercept2 <- y2[1]-slope2*x2[1]
-    
-    incentv1=max(datasim$incen1)
-    incentv2=max(datasim$incen2)
-    limry<-max(abs(max(datasim$ry.star)),abs(min(datasim$ry.star)))
-    limy<-max(abs(max(datasim$y.star)),abs(min(datasim$y.star)))
-    group.colors <- c("#7FC97F","#386CB0","#F0027F") 
-    ggplot(data= as.data.frame(datasim), aes(ry.star,y.star))+
-      labs(x ="latent propensity of observability(ry*) -->", y = "latent outcome response (y*) --->")+
-      labs(shape="Measurement")+
-      scale_shape_manual(values=c(19,1))+
-      scale_y_continuous(breaks = c(0)) +
-      scale_x_continuous(breaks = c(0))+ 
-      annotate("text", y = -limy/2, x = (-limy-1), label = "HIV-",angle=90,size=2) +
-      annotate("text", y =  limy/2, x = (-limy-1), label = "HIV+",angle=90,size=2)+
-      coord_cartesian(xlim = c(-limry,limry), ylim = c(-limy,limy),clip = "off")+
-      xlab(expression('Latent propensity of observability '(R[i]*'*') %->%''))+
-      ylab(expression('Latent test result ' (Y[i]*'*') %->%''))+
-      theme_minimal()+
-      geom_point(data=summary,aes(x=Meanry,y=Meany,colour=incenc),size=3)+
-      geom_smooth(size=0.5,colour="black",se = F)+
-      labs(shape="Measurement",color="Incentive")+
-      scale_colour_manual(values=group.colors)+
-      ggtitle("Means of incentived patients")+theme_minimal()+
-      theme( legend.position = 'bottom')})
-  
-  output$table_inc <- renderTable({
+output$table_inc <- renderTable({
     datasim<-as.data.table(data.sel())
     incen.table<-as.data.table(table(datasim$observed,datasim$ybin0,datasim$incenc))
     colnames(incen.table)<-c("Measurement","HIVtest","Incentive","N")
@@ -382,7 +342,7 @@ The results of each imputation method is shown in the below table:
  
  In general, it is observed that when $\rho=0$, the MAR imputation method provides the lowest bias estimates. As $\rho$ moves away from zero, the Heckman imputation methods are observed to provide better estimates of HIV prevalence. Most of the time, it is observed that not using ERV in the Heckman model may result in more biased estimates.
 
-The incentive methods applied here cannot be technically compared with the first three described (MAR, Heckman without VRE, Heckman interviewerID), since the percentage of absence from HIV testing is different. That is, in the scenarios with incentives, we additionally observe the test results of individuals whose consent varied due to the incentive. In general, however, we found that the complex incentive methods (ID and interviewer incentive, staggered incentives) generally yielded less biased prevalence estimates. In addition, we found that the prevalence estimate is sensitive to the proportion of individuals assigned to each of the incentive groups.  
+The incentive methods applied here cannot be technically compared with the first three described (MAR, Heckman without ERV, Heckman interviewerID), since the percentage of missing observations differs. That is, in the scenarios with incentives, we additionally observe the test results of individuals whose consent varied due to the incentive. In general, however, we found that the complex incentive methods (ID and interviewer incentive, staggered incentives) generally yielded less biased prevalence estimates. In addition, we found that the prevalence estimate is sensitive to the proportion of individuals assigned to each of the incentive groups.  
  
  
 ## Additional functions code
@@ -948,4 +908,5 @@ prevalence.pool<-function(data, outcome_name) {
   ci.ub<-inv.logit(logit.ci.ub)*100
   return(c(prevalence,ci.lb,ci.ub))
 }
+
 
