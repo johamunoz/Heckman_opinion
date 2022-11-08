@@ -15,5 +15,11 @@ In this repository you can find the codes used in the shiny-app that complements
 ## Shinyapp link
 [shiny-app](https://johamunoz.shinyapps.io/Heckman_opinion)
 
+## Acknowledgements
+This project has received funding from the European Union’s Horizon 2020 research and innovation programme
+under ReCoDID grant agreement No 825746.
+
 ## Support
-For support, email j.munozavila@umcutrecht.com 
+For support, email j.munozavila@umcutrecht.nl
+
+
