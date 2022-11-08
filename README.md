@@ -4,7 +4,6 @@
 In this repository you can find the codes used in the shiny-app that complements the information described in the paper.
 
 ## Authors
-
 - Johanna Muñoz
 - Heather Hufstedler
 - Paul Gustafson
@@ -13,13 +12,8 @@ In this repository you can find the codes used in the shiny-app that complements
 - Thomas P.A. Debray
 
 
-## Support
-
-For support, email j.munozavila@umcutrecht.com 
-
-
-## shinyapps link
-
-
+## Shinyapp link
 [shiny-app](https://johamunoz.shinyapps.io/Heckman_opinion)
 
+## Support
+For support, email j.munozavila@umcutrecht.com 
