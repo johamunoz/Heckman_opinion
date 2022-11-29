@@ -10,50 +10,47 @@ library(shiny)
 library(reshape)
 
 # Prevalence functions ----
-logit <- function(x) {log(x/(1-x))}
-inv.logit <- function(x) {1/(1+exp(-x))}
-inv.logit.SE<- function(logit.se, c) {logit.se * (c*(1-c))}
-
+logit <- function(x){log(x/(1-x))}
+inv_logit<- function(x){exp(x)/(1+exp(x))}
 
 #Function for calculating prevalence CI
-f.prevalence <- function(data,outcome_name) {
+prev_est <- function(data,outcome_name) {
   a<-summary(data[,get(outcome_name)])
   b<-prop.test(x = a[[2]], n = sum(a), correct = TRUE)
   prop<-b$estimate[[1]]
   ci<-b$conf
-  return(list(prevalence= prop,ci.l=ci[1], ci.u=ci[2]))
+  se<-(ci[2]-ci[1])/(2*1.96)
+  #Replace 0's by 0.000001
+  prevalence<-ifelse(prop==0,1e-10,ifelse(prop==1,1-1e-10,prop))
+  return(list(prev= prevalence,prev_se=se))
 }
 
 #Function to calculate pooled prevalence across imputed datasets 
 prevalence.pool<-function(data, outcome_name) {
   m <-length(unique(data$.imp))
   #Calculate absolute risk of outcome per study
-  inc.outcome<-setDT(data)[, f.prevalence(data=.SD, outcome_name=outcome_name), by = list(.imp)]
-  
-  #Replace 0's by 0.000001
-  inc.outcome$prevalence[inc.outcome$prevalence==0]<-0.000001
-  inc.outcome$ci.l[inc.outcome$ci.l==0]<-0.000001
+  prev_group<-setDT(data)[, prev_est(data=.SD, outcome_name=outcome_name), by = list(.imp)]
   
   #Logit transformation
-  inc.outcome[,logit.prevalence:=logit(prevalence)]
-  inc.outcome[,logit.ci.l:=logit(ci.l)]
-  inc.outcome[,logit.ci.u:=logit(ci.u)]
-  inc.outcome[,logit.se:=(logit.ci.u-logit.ci.l)/(2*1.96)]
+  prev_group[,prev_logit:=logit(prev)] 
+  prev_group[,prev_se_logit:=prev_se/(prev*(1-prev))]
   
-  logit.abs <- mean(inc.outcome$logit.prevalence)
-  within <- mean(inc.outcome$logit.se^2)
-  between <- (1 + (1/m)) * var(inc.outcome$logit.prevalence)
-  logit.var <- within + between
-  logit.se <- sqrt(logit.var)
-  logit.ci.lb <- logit.abs + qnorm(0.05/2)*logit.se
-  logit.ci.ub <- logit.abs + qnorm(1 - 0.05/2)*logit.se
+  # Pool cluster estimates
+  pool_est_logit <- mean(prev_group$prev_logit)# pool est
+  w_var_logit <- mean(prev_group$prev_se_logit^2) #within var
+  b_var_logit <- var(prev_group$prev_logit) #between var
+  pool_se_logit <- sqrt(w_var_logit + (1 + (1/m)) * b_var_logit) #pool se
+  r <- (1 + 1 / m) * (b_var_logit / w_var_logit)
+  v <- (m - 1) * (1 + (1/r))^2
+  t <- qt(0.975, v) # t critical value for 95% CI
+  pool_LC_logit=pool_est_logit-pool_se_logit*t
+  pool_UC_logit=pool_est_logit+pool_se_logit*t
   
-  prevalence<-inv.logit(logit.abs)*100
-  ci.lb<-inv.logit(logit.ci.lb)*100
-  ci.ub<-inv.logit(logit.ci.ub)*100
+  prevalence<-inv_logit(pool_est_logit)*100
+  ci.lb<-inv_logit(pool_LC_logit)*100
+  ci.ub<-inv_logit(pool_UC_logit)*100
   return(data.frame(cbind(prevalence=prevalence,ci.lb=ci.lb,ci.ub=ci.ub)))
 }
-
 
 
 #  Define dataset --
