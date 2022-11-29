@@ -14,7 +14,7 @@ logit <- function(x){log(x/(1-x))}
 inv_logit<- function(x){exp(x)/(1+exp(x))}
 
 #Function for calculating prevalence CI
-prev_est <- function(data,outcome_name) {
+f.prevalence <- function(data,outcome_name) {
   a<-summary(data[,get(outcome_name)])
   b<-prop.test(x = a[[2]], n = sum(a), correct = TRUE)
   prop<-b$estimate[[1]]
@@ -29,7 +29,7 @@ prev_est <- function(data,outcome_name) {
 prevalence.pool<-function(data, outcome_name) {
   m <-length(unique(data$.imp))
   #Calculate absolute risk of outcome per study
-  prev_group<-setDT(data)[, prev_est(data=.SD, outcome_name=outcome_name), by = list(.imp)]
+  prev_group<-setDT(data)[, f.prevalence(data=.SD, outcome_name=outcome_name), by = list(.imp)]
   
   #Logit transformation
   prev_group[,prev_logit:=logit(prev)] 
